@@ -1,15 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.hch.koulovesu"
-    android:versionCode="1"
-    android:versionName="1.0" >
+    android:versionCode="2"
+    android:versionName="1.1" >
 
     <uses-sdk
-        android:minSdkVersion="9"
+        android:minSdkVersion="12"
         android:targetSdkVersion="21" />
     
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>  
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
+    <uses-permission android:name="com.hch.koulovesu.permission.C2D_MESSAGE" />
+    <permission android:name="com.hch.koulovesu.permission.C2D_MESSAGE"
+        android:protectionLevel="signature" />
+    
 
     <application
         android:allowBackup="true"
@@ -24,6 +31,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <receiver
+            android:name=".GcmBroadcastReceiver"
+            android:permission="com.google.android.c2dm.permission.SEND" >
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+                <category android:name="com.hch.koulovesu" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".GcmIntentService" />
+        
+        <meta-data android:name="com.google.android.gms.version"
+        	android:value="@integer/google_play_services_version" />
     </application>
 
 </manifest>

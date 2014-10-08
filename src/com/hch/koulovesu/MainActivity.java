@@ -14,11 +14,19 @@ import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Locale;
 
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockActivity;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesUtil;
+import com.google.android.gms.gcm.GoogleCloudMessaging;
 
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
@@ -26,6 +34,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils.TruncateAt;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
@@ -37,6 +46,7 @@ import android.widget.Toast;
 
 public class MainActivity extends SherlockActivity {
 
+	private static final int REQUEST_GCM_ERROR_DIALOG = 0;
 	private ArrayList<Sector> sectors = new ArrayList<Sector>();
 	private SectorListAdapter listAdapter;
 	private Handler handler;
@@ -83,7 +93,81 @@ public class MainActivity extends SherlockActivity {
 	protected void onResume() {
 		super.onResume();
 		
+		//Try Register GCM in background
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				tryRegisterGCM();
+			}
+		}).start();
 		
+	}
+	
+	private void tryRegisterGCM() {
+		final int gcmAvailability = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
+		
+		if(gcmAvailability == ConnectionResult.SUCCESS) {
+			
+			Log.i(Constants.TAG_GCM, "GCM Available");
+			
+			SharedPreferences preferences = getSharedPreferences(MainActivity.class.getSimpleName(), Context.MODE_PRIVATE);
+			String cachedGCMId = preferences.getString(Constants.PREFERENCE_GCM_ID, null);
+			int cachedAppVersion = preferences.getInt(Constants.PREFERENCE_GCM_REGISTERED_APP_VERSION, -1);
+			int currentAppVersion = getAppVersion(MainActivity.this);
+			
+			if(cachedGCMId == null || currentAppVersion != cachedAppVersion) {
+				GoogleCloudMessaging gcm = GoogleCloudMessaging.getInstance(this);
+				try {
+					String regId = gcm.register(Constants.GCM_SENDER_ID);
+					Log.i(Constants.TAG_GCM, "device registered, regId : " + regId);
+					
+					HashMap<String, Object> params = new HashMap<String, Object>();
+					params.put("reg_id", regId);
+					
+					ConnectionHelper.HttpResult registerResult = ConnectionHelper.sendPostRequest("registerGCMId", params);
+					if(registerResult.success) {
+						//Registering RegId to Server succeeded, saved regId to preferences
+						
+					    SharedPreferences.Editor editor = preferences.edit();
+					    editor.putString(Constants.PREFERENCE_GCM_ID, regId);
+					    editor.putInt(Constants.PREFERENCE_GCM_REGISTERED_APP_VERSION, currentAppVersion);
+					    
+					    if(editor.commit()) {
+					    	Log.i(Constants.TAG_GCM, "Saving regId succeeded, app version : " + currentAppVersion);
+					    } else {
+					    	Log.e(Constants.TAG_GCM, "Failed saving regId to preferences");
+					    }
+					    
+					} else {
+						Log.e(Constants.TAG_GCM, String.format("Failed register to server, error : %s", registerResult.responsedString));
+					}
+					
+				} catch (IOException e) {
+					Log.e(Constants.TAG_GCM, e.getMessage());
+				}
+			}
+			
+		} else if(GooglePlayServicesUtil.isUserRecoverableError(gcmAvailability)) {
+			
+			handler.post(new Runnable() {
+				@Override
+				public void run() {
+					GooglePlayServicesUtil.getErrorDialog(gcmAvailability, MainActivity.this, REQUEST_GCM_ERROR_DIALOG).show();
+				}
+			});
+			
+		}
+	}
+	
+	private static int getAppVersion(Context context) {
+	    try {
+	        PackageInfo packageInfo = context.getPackageManager()
+	                .getPackageInfo(context.getPackageName(), 0);
+	        return packageInfo.versionCode;
+	    } catch (NameNotFoundException e) {
+	        // should never happen
+	        throw new RuntimeException("Could not get package name: " + e);
+	    }
 	}
 	
 	private void update() {
@@ -340,6 +424,7 @@ public class MainActivity extends SherlockActivity {
 	    return new File(cacheDirectory, "cache");
 	}
 	
+	
 	class Sector {
 		String title;
 		String message;
@@ -347,15 +432,18 @@ public class MainActivity extends SherlockActivity {
 		int week;
 	}
 	
+	
 	class SectorListAdapter extends BaseAdapter {
-		class ViewHolder {
+		private class ViewHolder {
 			TextView titleTextView;
 			TextView subTitleTextView;
 		}
 		
-		int selectedIndex = -1;
+		private int selectedIndex = -1;
+		private ListView listView;
 		
 		public SectorListAdapter(ListView listView) {
+			this.listView = listView;
 			listView.setOnItemClickListener(onItemClickListener);
 		}
 		
@@ -390,7 +478,13 @@ public class MainActivity extends SherlockActivity {
 				viewHolder = (ViewHolder)convertView.getTag();
 			}
 			if(sector.number != -1) {
-				String titleString = String.format("作業 %d", sector.number);
+				String titleString = String.format(Locale.TAIWAN, "作業 %d", sector.number);
+				if(!sector.title.isEmpty()) {
+					titleString += " : " + sector.title;
+				}
+				viewHolder.titleTextView.setText(titleString);
+			} else if(sector.week != -1) {
+				String titleString = String.format(Locale.TAIWAN, "第%d週", sector.week);
 				if(!sector.title.isEmpty()) {
 					titleString += " : " + sector.title;
 				}
@@ -438,7 +532,11 @@ public class MainActivity extends SherlockActivity {
 			
 			@Override
 			public int compare(Sector lhs, Sector rhs) {
-				return Integer.valueOf(lhs.number).compareTo(rhs.number);
+				if(lhs.number == -1 && lhs.week != -1 || rhs.number == -1 && rhs.week != -1) {
+					return Integer.valueOf(rhs.week).compareTo(lhs.week);
+				} else {
+					return Integer.valueOf(rhs.number).compareTo(lhs.number);
+				}
 			}
 		};
 		
@@ -447,10 +545,12 @@ public class MainActivity extends SherlockActivity {
 			public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
 				if(selectedIndex == position) {
 					selectedIndex = -1;
+					notifyDataSetChanged();
 				} else {
 					selectedIndex = position;
+					notifyDataSetChanged();
+					listView.smoothScrollToPositionFromTop(selectedIndex, 0, 150);
 				}
-				notifyDataSetChanged();
 			}
 		};
 	};

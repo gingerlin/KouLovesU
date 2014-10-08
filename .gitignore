@@ -31,3 +31,5 @@ local.properties
 # PDT-specific
 .buildpath
 project.properties
+
+Server/node_modules
