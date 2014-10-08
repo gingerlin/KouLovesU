@@ -240,7 +240,7 @@ public class MainActivity extends SherlockActivity {
 			char currentChar = dataString.charAt(currentIndex);
 			if(currentChar == previousChar && currentChar != ' ') {
 				repeatTimes ++;
-				if(repeatTimes == 10) {
+				if(repeatTimes == 50) {
 					//separator detected
 					sectorStrings.add(dataString.substring(0, currentIndex - repeatTimes));
 					dataString = dataString.substring(dataString.indexOf('\n', currentIndex));

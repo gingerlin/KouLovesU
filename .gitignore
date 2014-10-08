@@ -33,3 +33,4 @@ local.properties
 project.properties
 
 Server/node_modules
+Server/regIds.txt
