@@ -36,10 +36,14 @@ public class GcmIntentService extends IntentService {
 	
 	private void sendNotification(String message, String title) {
 		
+		int notificationId = (int) (Integer.MIN_VALUE + Math.pow(2, 32) * Math.random());
+		
+		Log.i(Constants.TAG_GCM, "notification id : " + notificationId);
+		
 		NotificationManager notificationManager = (NotificationManager)this.getSystemService(Context.NOTIFICATION_SERVICE);
 
-        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), 0);
-
+        PendingIntent contentIntent = PendingIntent.getActivity(this, notificationId, new Intent(this, MainActivity.class), 0);
+        		
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this)
         	.setDefaults(Notification.DEFAULT_SOUND | Notification.DEFAULT_VIBRATE)
 	        .setSmallIcon(R.drawable.app_icon)
@@ -54,7 +58,7 @@ public class GcmIntentService extends IntentService {
 	    }
 
         builder.setContentIntent(contentIntent);
-        notificationManager.notify(0, builder.build());
+        notificationManager.notify(notificationId, builder.build());
     }
 
 }
