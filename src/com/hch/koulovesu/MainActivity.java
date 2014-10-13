@@ -2,9 +2,6 @@ package com.hch.koulovesu;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -16,23 +13,23 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Locale;
-
+import java.util.UUID;
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockActivity;
+import com.actionbarsherlock.view.Menu;
+import com.actionbarsherlock.view.MenuItem;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.gcm.GoogleCloudMessaging;
 
-import android.content.Context;
+import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.SharedPreferences.Editor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
-import android.os.Looper;
+import android.preference.PreferenceManager;
 import android.text.TextUtils.TruncateAt;
 import android.util.Log;
 import android.view.View;
@@ -52,8 +49,6 @@ public class MainActivity extends SherlockActivity {
 	private Handler handler;
 	
 	private int maxWeek = 0;
-	
-	private static Object diskLock = new Object();
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -75,7 +70,7 @@ public class MainActivity extends SherlockActivity {
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
-				final String cachedContent = readFromDisk(MainActivity.this);
+				final String cachedContent = Utils.readFromDisk(MainActivity.this);
 				if(cachedContent != null && !cachedContent.isEmpty()) {
 					handler.post(new Runnable() {
 						@Override
@@ -84,9 +79,16 @@ public class MainActivity extends SherlockActivity {
 						}
 			        });
 				}
-				update();
+				
+				SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+				int lastUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, 0);
+				if(Utils.getCurrentTimestamp() - lastUpdateTimestamp >= Constants.CONFIG_UPDATE_INTERVAL) {
+					update();
+				}
 			}
 		}).start();
+		
+		//checkLatestVersion();
 	}
 	
 	@Override
@@ -102,18 +104,65 @@ public class MainActivity extends SherlockActivity {
 		}).start();
 		
 	}
+
+	@Override
+	public boolean onCreateOptionsMenu(Menu menu) {
+		menu.add(Menu.NONE, 0, Menu.NONE, "Refresh")
+			.setIcon(R.drawable.ic_action_refresh)
+			.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+		
+		return super.onCreateOptionsMenu(menu);
+	}
+	
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		switch(item.getItemId()) {
+		case 0:
+			update();
+			break;
+		}
+		
+		return super.onOptionsItemSelected(item);
+	}
 	
 	private void tryRegisterGCM() {
+		
+		//Get Device UUID
+		SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+		SharedPreferences.Editor editor = preferences.edit();
+		
+		final String deviceId;
+		if(preferences.contains(Constants.PREFERENCE_DEVICE_UUID_ID)) {
+			deviceId = preferences.getString(Constants.PREFERENCE_DEVICE_UUID_ID, null);
+		} else {
+			deviceId = UUID.randomUUID().toString();
+			
+			editor.putString(Constants.PREFERENCE_DEVICE_UUID_ID, deviceId);
+			if(editor.commit()) {
+		    	Log.i(Constants.TAG_GCM, "Saving device UUID succeeded");
+		    } else {
+		    	Log.e(Constants.TAG_GCM, "Failed saving device UUID");
+		    	return;
+		    }
+		}
+		if(deviceId == null) {
+			Log.e(Constants.TAG_GCM, "Couldn't get device UUID");
+			return;
+		}
+		
+		//start checking GCM availability
 		final int gcmAvailability = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
 		
 		if(gcmAvailability == ConnectionResult.SUCCESS) {
 			
-			Log.i(Constants.TAG_GCM, "GCM Available");
-			
-			SharedPreferences preferences = getSharedPreferences(MainActivity.class.getSimpleName(), Context.MODE_PRIVATE);
 			String cachedGCMId = preferences.getString(Constants.PREFERENCE_GCM_ID, null);
 			int cachedAppVersion = preferences.getInt(Constants.PREFERENCE_GCM_REGISTERED_APP_VERSION, -1);
-			int currentAppVersion = getAppVersion(MainActivity.this);
+			int currentAppVersion = Utils.getAppVersion(MainActivity.this);
+			
+			Log.i(Constants.TAG_GCM, "GCM Available");
+			if(cachedGCMId != null) {
+				Log.i(Constants.TAG_GCM, "GCM ID : " + cachedGCMId);
+			}
 			
 			if(cachedGCMId == null || currentAppVersion != cachedAppVersion) {
 				GoogleCloudMessaging gcm = GoogleCloudMessaging.getInstance(this);
@@ -123,12 +172,12 @@ public class MainActivity extends SherlockActivity {
 					
 					HashMap<String, Object> params = new HashMap<String, Object>();
 					params.put("reg_id", regId);
+					params.put("device_id", deviceId);
 					
 					ConnectionHelper.HttpResult registerResult = ConnectionHelper.sendPostRequest("registerGCMId", params);
 					if(registerResult.success) {
 						//Registering RegId to Server succeeded, saved regId to preferences
 						
-					    SharedPreferences.Editor editor = preferences.edit();
 					    editor.putString(Constants.PREFERENCE_GCM_ID, regId);
 					    editor.putInt(Constants.PREFERENCE_GCM_REGISTERED_APP_VERSION, currentAppVersion);
 					    
@@ -158,24 +207,13 @@ public class MainActivity extends SherlockActivity {
 			
 		}
 	}
-	
-	private static int getAppVersion(Context context) {
-	    try {
-	        PackageInfo packageInfo = context.getPackageManager()
-	                .getPackageInfo(context.getPackageName(), 0);
-	        return packageInfo.versionCode;
-	    } catch (NameNotFoundException e) {
-	        // should never happen
-	        throw new RuntimeException("Could not get package name: " + e);
-	    }
-	}
+
 	
 	private void update() {
 		new Thread(new Runnable() {
 
 			@Override
 			public void run() {
-				Looper.prepare();
 				URL url = null;
 				try {
 					url = new URL("http://www.cc.ntut.edu.tw/~jykuo/course/c10301.txt");
@@ -196,15 +234,24 @@ public class MainActivity extends SherlockActivity {
 				        	responsedTextBuilder.append(line + "\n");
 				        }
 				        final String responsedText = responsedTextBuilder.toString();
-				        saveToDisk(MainActivity.this, responsedText);
+				        
 				        handler.post(new Runnable() {
 							@Override
 							public void run() {
-								handleDataString(responsedText);
-								Toast.makeText(MainActivity.this, "已更新", Toast.LENGTH_SHORT).show();
+								try {
+									handleDataString(responsedText);
+									Utils.saveToDisk(MainActivity.this, responsedText);
+									
+									Toast.makeText(MainActivity.this, "已更新", Toast.LENGTH_SHORT).show();
+									
+									Editor preferencesEditor = PreferenceManager.getDefaultSharedPreferences(MainActivity.this).edit();
+									preferencesEditor.putInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
+									preferencesEditor.apply();
+								} catch (Exception e) {
+									Toast.makeText(MainActivity.this, "無法更新 " + e.getMessage(), Toast.LENGTH_SHORT).show();
+								}
 							}
 				        });
-				        Looper.loop();
 					} catch (IOException e) {
 						e.printStackTrace();
 					} catch (Exception e) {
@@ -261,7 +308,7 @@ public class MainActivity extends SherlockActivity {
 		
 		for(String sectorString : sectorStrings) {
 			//Trim
-			sectorString = trim(sectorString);
+			sectorString = Utils.trim(sectorString);
 			if(sectorString.isEmpty()) {
 				continue;
 			}
@@ -270,11 +317,11 @@ public class MainActivity extends SherlockActivity {
 			
 			//Check if its week line
 			try {
-				String firstLine = getFirstLine(sectorString);
+				String firstLine = Utils.getFirstLine(sectorString);
 				if(firstLine.startsWith("Week ")) {
 					String weekString = firstLine.substring(5);
 					sectorString = sectorString.substring(sectorString.indexOf('\n') + 1);
-					sectorString = trim(sectorString);
+					sectorString = Utils.trim(sectorString);
 					
 					currentWeek = Integer.valueOf(weekString);
 					maxWeek = Math.max(currentWeek, maxWeek);
@@ -284,7 +331,7 @@ public class MainActivity extends SherlockActivity {
 			}
 			
 			//Find number
-			String numberString = getNumberString(sectorString);
+			String numberString = Utils.getNumberString(sectorString);
 			if(numberString != null) {
 				sector.number = Integer.valueOf(numberString);
 				sectorString = sectorString.substring(numberString.length() + 1);
@@ -293,12 +340,15 @@ public class MainActivity extends SherlockActivity {
 				sector.number = -1;
 			}
 			
-
-			sector.week = currentWeek;
+			if(Utils.getFirstLine(sectorString).contains("課堂練習")) {
+				sector.week = -1;
+			} else {
+				sector.week = currentWeek;
+			}
 			
-			sector.title = getFirstLine(sectorString);
+			sector.title = Utils.getFirstLine(sectorString);
 			
-			sectorString = trim(sectorString);
+			sectorString = Utils.trim(sectorString);
 			
 			sector.message = sectorString.substring(sectorString.indexOf("\n") + 1);
 			sectors.add(sector);
@@ -306,124 +356,6 @@ public class MainActivity extends SherlockActivity {
 		
 		listAdapter.notifyDataSetChanged();
 	}
-	
-	private static String getNumberString(String input) {
-		
-		int emptyIndex = input.indexOf(' ');
-		int newLineIndex = input.indexOf('\n');
-		int dotIndex = input.indexOf('.');
-		int minSeparateIndex = getPositiveMin(getPositiveMin(emptyIndex, newLineIndex), dotIndex);
-		if(minSeparateIndex != -1) {
-			try {
-				String numberString = input.substring(0, minSeparateIndex);
-				Integer.valueOf(numberString);
-				return numberString;
-			} catch (NumberFormatException e) {
-				return null;
-			}
-			
-		} else {
-			return null;
-		}
-	}
-	
-	private static int getPositiveMin(int arg0, int arg1) 
-	{
-		if(arg0 >= 0) {
-			if(arg1 >= 0) {
-				//both are positive, return minimum
-				return Math.min(arg0, arg1);
-			} else {
-				//arg0 is positive, arg1 is negative, return arg0
-				return arg0;
-			}
-		} else {
-			return arg1 >= 0 ? arg1 : -1;
-		}
-	}
-	
-	private static String getFirstLine(String input) {
-		return input.substring(0, input.indexOf("\n"));
-	}
-	
-	private static String trim(String input) {
-		while(!input.isEmpty() && (input.charAt(0) == ' ' || input.charAt(0) == '\n')) {
-			if(input.length() > 1) {
-				input = input.substring(1);
-			} else {
-				input = "";
-				break;
-			}
-		}
-		while(!input.isEmpty() && (input.charAt(input.length() - 1) == ' ' || input.charAt(input.length() - 1) == '\n')) {
-			if(input.length() > 1) {
-				input = input.substring(0, input.length() - 1);
-			} else {
-				input = "";
-				break;
-			}
-		}
-		return input;
-	}
-	
-	private static String readFromDisk(Context context) {
-		synchronized (diskLock) {
-			StringBuilder text = new StringBuilder();
-			
-			BufferedReader bufferedReader = null;
-			try {
-			    bufferedReader = new BufferedReader(new FileReader(getCacheFile(context)));
-			    String line;
-
-			    while ((line = bufferedReader.readLine()) != null) {
-			        text.append(line);
-			        text.append('\n');
-			    }
-			}
-			catch (IOException e) {
-			    
-			} finally {
-				if(bufferedReader != null) {
-					try {
-						bufferedReader.close();
-					} catch (IOException e) {
-						e.printStackTrace();
-					}
-				}
-			}
-			
-			return text.toString();
-		}
-	}
-	
-	private static void saveToDisk(final Context context, final String content) {
-		new Thread(new Runnable() {
-			@Override
-			public void run() {
-				synchronized (diskLock) {
-					try {
-						FileOutputStream out;
-						out = new FileOutputStream(getCacheFile(context));
-						out.write(content.getBytes());
-				        out.close();  
-					} catch (Exception e) {
-						e.printStackTrace();
-					}
-				}
-			}
-		}).start();
-	}
-	
-	private static File getCacheFile(Context context) {
-		File cacheDirectory;  
-	    if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState()) || !Environment.isExternalStorageRemovable()) {  
-	    	cacheDirectory = context.getExternalCacheDir();  
-	    } else {  
-	    	cacheDirectory = context.getCacheDir();  
-	    }
-	    return new File(cacheDirectory, "cache");
-	}
-	
 	
 	class Sector {
 		String title;
@@ -541,6 +473,7 @@ public class MainActivity extends SherlockActivity {
 		};
 		
 		private OnItemClickListener onItemClickListener = new OnItemClickListener() {
+			@SuppressLint("NewApi")
 			@Override
 			public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
 				if(selectedIndex == position) {
@@ -549,7 +482,12 @@ public class MainActivity extends SherlockActivity {
 				} else {
 					selectedIndex = position;
 					notifyDataSetChanged();
-					listView.smoothScrollToPositionFromTop(selectedIndex, 0, 150);
+					if(android.os.Build.VERSION.SDK_INT >= 11) {
+						listView.smoothScrollToPositionFromTop(selectedIndex, 0, 150);
+					} else {
+						listView.setSelectionFromTop(selectedIndex, 0);
+					}
+					
 				}
 			}
 		};
