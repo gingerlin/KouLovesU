@@ -67,6 +67,24 @@ public class MainActivity extends SherlockActivity {
 		
 		handler = new Handler();
 		
+		
+		
+		//checkLatestVersion();
+	}
+	
+	@Override
+	protected void onResume() {
+		super.onResume();
+		
+		//Try Register GCM in background
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				tryRegisterGCM();
+			}
+		}).start();
+		
+		
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
@@ -87,22 +105,6 @@ public class MainActivity extends SherlockActivity {
 				}
 			}
 		}).start();
-		
-		//checkLatestVersion();
-	}
-	
-	@Override
-	protected void onResume() {
-		super.onResume();
-		
-		//Try Register GCM in background
-		new Thread(new Runnable() {
-			@Override
-			public void run() {
-				tryRegisterGCM();
-			}
-		}).start();
-		
 	}
 
 	@Override
@@ -287,7 +289,7 @@ public class MainActivity extends SherlockActivity {
 			char currentChar = dataString.charAt(currentIndex);
 			if(currentChar == previousChar && currentChar != ' ') {
 				repeatTimes ++;
-				if(repeatTimes == 50) {
+				if(repeatTimes == 45) {
 					//separator detected
 					sectorStrings.add(dataString.substring(0, currentIndex - repeatTimes));
 					dataString = dataString.substring(dataString.indexOf('\n', currentIndex));
