@@ -22,14 +22,22 @@
         android:allowBackup="true"
         android:icon="@drawable/app_icon"
         android:label="@string/app_name" >
+        
         <activity
             android:name="com.hch.koulovesu.MainActivity"
-            android:label="@string/app_name" >
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Sherlock" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+        
+        <activity
+            android:name="com.hch.koulovesu.ViewActivity"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Sherlock" >
         </activity>
         
         <receiver

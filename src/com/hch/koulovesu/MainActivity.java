@@ -14,22 +14,32 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.UUID;
+
+import org.json.JSONException;
+
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuItem;
+import com.actionbarsherlock.view.Window;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.gcm.GoogleCloudMessaging;
+import com.hch.koulovesu.ConnectionHelper.HttpResult;
+import com.viewpagerindicator.TitlePageIndicator;
 
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.preference.PreferenceManager;
+import android.support.v4.view.PagerAdapter;
+import android.support.v4.view.ViewPager;
 import android.text.TextUtils.TruncateAt;
 import android.util.Log;
 import android.view.View;
@@ -37,9 +47,11 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.BaseAdapter;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
 
 public class MainActivity extends SherlockActivity {
 
@@ -50,9 +62,16 @@ public class MainActivity extends SherlockActivity {
 	
 	private int maxWeek = 0;
 	
+	private ListView subjectListView;
+	private ListView solutionListView;
+	private ViewPager viewPager;
+	
+	private boolean isUpdating = false;
+	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+		requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
 		setContentView(R.layout.activity_main);
 		
 		//Setup ActionBar
@@ -61,13 +80,20 @@ public class MainActivity extends SherlockActivity {
 		actionBar.setDisplayHomeAsUpEnabled(false);
 		actionBar.setHomeButtonEnabled(true);
 		
-		ListView listView = (ListView)findViewById(R.id.listview);
-		listAdapter = new SectorListAdapter(listView);
-		listView.setAdapter(listAdapter);
+		subjectListView = new ListView(this);
+		listAdapter = new SectorListAdapter(subjectListView);
+		subjectListView.setAdapter(listAdapter);
+		
+		solutionListView = new ListView(this);
+		
+		viewPager = (ViewPager) findViewById(R.id.viewpager);
+		viewPager.setAdapter(pagerAdapter);
+		
+		((TitlePageIndicator)findViewById(R.id.indicator)).setViewPager(viewPager);
+		
+		
 		
 		handler = new Handler();
-		
-		
 		
 		//checkLatestVersion();
 	}
@@ -84,10 +110,40 @@ public class MainActivity extends SherlockActivity {
 			}
 		}).start();
 		
-		
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
+				//Check latest version
+				HttpResult result = ConnectionHelper.sendGetRequest("getLatestVersionNumber", null);
+				if(result.success) {
+					try {
+						int latestAppVersion = result.result.getInt("latest_app_version");
+						int currentAppVersion = Utils.getAppVersion(getApplicationContext());
+						
+						if(latestAppVersion > currentAppVersion) {
+							final String appPackageName = getPackageName();
+							Intent intent;
+							try {
+							    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + appPackageName));
+							} catch (android.content.ActivityNotFoundException anfe) {
+							    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://play.google.com/store/apps/details?id=" + appPackageName));
+							}
+							MainActivity.this.startActivity(intent);
+							handler.post(new Runnable() {
+								@Override
+								public void run() {
+									Toast.makeText(getApplicationContext(), "請更新至最新的版本", Toast.LENGTH_LONG).show();
+								}
+							});
+							finish();
+							return;
+						}
+					} catch (JSONException e) {
+						e.printStackTrace();
+					}
+				}
+				
+				//Fetch cached contents
 				final String cachedContent = Utils.readFromDisk(MainActivity.this);
 				if(cachedContent != null && !cachedContent.isEmpty()) {
 					handler.post(new Runnable() {
@@ -98,6 +154,7 @@ public class MainActivity extends SherlockActivity {
 			        });
 				}
 				
+				//Update from the Internet
 				SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
 				int lastUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, 0);
 				if(Utils.getCurrentTimestamp() - lastUpdateTimestamp >= Constants.CONFIG_UPDATE_INTERVAL) {
@@ -190,7 +247,7 @@ public class MainActivity extends SherlockActivity {
 					    }
 					    
 					} else {
-						Log.e(Constants.TAG_GCM, String.format("Failed register to server, error : %s", registerResult.responsedString));
+						Log.e(Constants.TAG_GCM, "Failed register GCM id to server");
 					}
 					
 				} catch (IOException e) {
@@ -212,6 +269,20 @@ public class MainActivity extends SherlockActivity {
 
 	
 	private void update() {
+		
+		if(isUpdating) {
+			return;
+		}
+		
+		isUpdating = true;
+		
+		handler.post(new Runnable() {
+			@Override
+			public void run() {
+				setSupportProgressBarIndeterminateVisibility(true);
+			}
+		});
+		
 		new Thread(new Runnable() {
 
 			@Override
@@ -268,6 +339,14 @@ public class MainActivity extends SherlockActivity {
 						}
 					}
 				}
+				
+				handler.post(new Runnable() {
+					@Override
+					public void run() {
+						setSupportProgressBarIndeterminateVisibility(false);
+					}
+				});
+				isUpdating = false;
 			}
 		}).start();
 	}
@@ -350,21 +429,64 @@ public class MainActivity extends SherlockActivity {
 			
 			sector.title = Utils.getFirstLine(sectorString);
 			
+			sectorString = sectorString.substring(sectorString.indexOf("\n") + 1);
+			
 			sectorString = Utils.trim(sectorString);
 			
-			sector.message = sectorString.substring(sectorString.indexOf("\n") + 1);
+			sector.message = sectorString;
 			sectors.add(sector);
 		}
 		
 		listAdapter.notifyDataSetChanged();
 	}
 	
-	class Sector {
-		String title;
-		String message;
-		int number;
-		int week;
-	}
+	private PagerAdapter pagerAdapter = new PagerAdapter() {
+
+		public CharSequence getPageTitle(int position) {
+			switch(position) {
+			case 0:
+				return "題目";
+			case 1:
+				return "參考解答";
+			default: 
+				return null;
+			}
+		};
+		
+		@Override
+		public int getCount() {
+			return 2;
+		}
+
+		@Override
+		public boolean isViewFromObject(View arg0, Object arg1) {
+			return arg0 == arg1;
+		}
+		
+		public Object instantiateItem(ViewGroup container, int position) {
+			switch(position) {
+			case 0:
+				container.addView(subjectListView);
+				return subjectListView;
+			case 1:
+				container.addView(solutionListView);
+				return solutionListView;
+			default: 
+				return null;
+			}
+		};
+		
+		public void destroyItem(ViewGroup container, int position, Object object) {
+			switch(position) {
+			case 0:
+				container.removeView(subjectListView);
+				break;
+			case 1:
+				container.removeView(solutionListView);
+				break;
+			}
+		}
+	};
 	
 	
 	class SectorListAdapter extends BaseAdapter {
@@ -373,11 +495,7 @@ public class MainActivity extends SherlockActivity {
 			TextView subTitleTextView;
 		}
 		
-		private int selectedIndex = -1;
-		private ListView listView;
-		
 		public SectorListAdapter(ListView listView) {
-			this.listView = listView;
 			listView.setOnItemClickListener(onItemClickListener);
 		}
 		
@@ -411,47 +529,19 @@ public class MainActivity extends SherlockActivity {
 			} else {
 				viewHolder = (ViewHolder)convertView.getTag();
 			}
-			if(sector.number != -1) {
-				String titleString = String.format(Locale.TAIWAN, "作業 %d", sector.number);
-				if(!sector.title.isEmpty()) {
-					titleString += " : " + sector.title;
-				}
-				viewHolder.titleTextView.setText(titleString);
-			} else if(sector.week != -1) {
-				String titleString = String.format(Locale.TAIWAN, "第%d週", sector.week);
-				if(!sector.title.isEmpty()) {
-					titleString += " : " + sector.title;
-				}
-				viewHolder.titleTextView.setText(titleString);
-			} else {
-				viewHolder.titleTextView.setText(sector.title);
-			}
+			viewHolder.titleTextView.setText(sector.getTitle());
 			viewHolder.subTitleTextView.setText(sector.message);
 			
-			if(selectedIndex == position) {
-				viewHolder.subTitleTextView.setEllipsize(TruncateAt.START);
-				viewHolder.subTitleTextView.setSingleLine(false);
-				if(maxWeek == sector.week) {
-					viewHolder.titleTextView.setTextColor(0xFF66CCCC);
-				} else {
-					viewHolder.titleTextView.setTextColor(Color.WHITE);
-				}
-				viewHolder.subTitleTextView.setTextColor(Color.WHITE);
-				
-				convertView.setPadding(25, 50, 25, 50);
-				
+			viewHolder.subTitleTextView.setEllipsize(TruncateAt.END);
+			viewHolder.subTitleTextView.setSingleLine();
+			if(maxWeek == sector.week) {
+				viewHolder.titleTextView.setTextColor(0xFF66CCCC);
 			} else {
-				viewHolder.subTitleTextView.setEllipsize(TruncateAt.END);
-				viewHolder.subTitleTextView.setSingleLine();
-				if(maxWeek == sector.week) {
-					viewHolder.titleTextView.setTextColor(0xFF66CCCC);
-				} else {
-					viewHolder.titleTextView.setTextColor(Color.GRAY);
-				}
-				viewHolder.subTitleTextView.setTextColor(Color.DKGRAY);
-				
-				convertView.setPadding(25, 0, 25, 0);
+				viewHolder.titleTextView.setTextColor(Color.GRAY);
 			}
+			viewHolder.subTitleTextView.setTextColor(Color.DKGRAY);
+			
+			convertView.setPadding(25, 0, 25, 0);
 			
 			return convertView;
 		}
@@ -462,7 +552,7 @@ public class MainActivity extends SherlockActivity {
 			super.notifyDataSetChanged();
 		}
 		
-		private Comparator<Sector> comparator = new Comparator<MainActivity.Sector>() {
+		private Comparator<Sector> comparator = new Comparator<Sector>() {
 			
 			@Override
 			public int compare(Sector lhs, Sector rhs) {
@@ -475,22 +565,15 @@ public class MainActivity extends SherlockActivity {
 		};
 		
 		private OnItemClickListener onItemClickListener = new OnItemClickListener() {
-			@SuppressLint("NewApi")
 			@Override
 			public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-				if(selectedIndex == position) {
-					selectedIndex = -1;
-					notifyDataSetChanged();
-				} else {
-					selectedIndex = position;
-					notifyDataSetChanged();
-					if(android.os.Build.VERSION.SDK_INT >= 11) {
-						listView.smoothScrollToPositionFromTop(selectedIndex, 0, 150);
-					} else {
-						listView.setSelectionFromTop(selectedIndex, 0);
-					}
-					
-				}
+				notifyDataSetChanged();
+				
+				Intent intent = new Intent();
+				intent.setClass(MainActivity.this, ViewActivity.class);
+				intent.putExtra("title", sectors.get(position).getTitle());
+				intent.putExtra("message", sectors.get(position).message);
+				MainActivity.this.startActivity(intent);
 			}
 		};
 	};

@@ -1,21 +1,17 @@
 package com.hch.koulovesu;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
+
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpVersion;
@@ -32,7 +28,9 @@ import org.apache.http.params.HttpParams;
 import org.apache.http.params.HttpProtocolParams;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.util.EntityUtils;
-import android.graphics.Bitmap;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import android.util.Log;
 
 public class ConnectionHelper {
@@ -61,64 +59,47 @@ public class ConnectionHelper {
 	}
 	
 	public static class HttpResult {
-		boolean success;
-        String responsedString;
+		boolean success = false;
+        JSONObject result = null;
     }
 	
-	protected interface HttpRequestDelegate<T> {
-        public void didGetResponse(boolean success, String responsedString);
-    }
-	
-	protected static <T> void sendGetRequest(final String request, final HashMap<String, Object> params, final HttpRequestDelegate<T> delegate) {
-        new Thread(new Runnable() {
-            public void run() {
-            	synchronized (httpClient) {
-            		try {
-                        String urlWithParams = SERVER_IP + request + "?";
-                        
-                        if(params != null) {
-    	                    Set<String> keys = params.keySet();
-    	                    for(String key : keys) {
-    	                    	String value = params.get(key).toString();
-    	                    	urlWithParams = urlWithParams + key + "=" + value + "&";
-    	                    }
-                        }
-
-                        urlWithParams = urlWithParams.substring(0, urlWithParams.length()-1);
-
-                        Log.i(TAG_CONNECTION, "SEND GET REQUEST: " + urlWithParams);
-
-            			HttpGet httpGet = new HttpGet(urlWithParams);
-            			HttpResponse response = httpClient.execute(httpGet);
-
-                        int statusCode = response.getStatusLine().getStatusCode();   
-                        
-                        if(statusCode != 200 && statusCode != 304) {
-	                        throw new Exception("Server responsed error " + String.valueOf(statusCode));
-	                    }
-
-                        final String responsedString = EntityUtils.toString(response.getEntity(), "utf-8");
-                        
-                        Log.i(TAG_CONNECTION, "Received: " + responsedString);
-                        
-                        delegate.didGetResponse(true, responsedString);
-                    } catch (Exception e) {
-                    	Log.e(TAG_CONNECTION, "GET REQUEST EXCEPTION: " + e.getMessage());
-
-                        delegate.didGetResponse(false, e.getMessage());
+	protected static HttpResult sendGetRequest(final String request, final HashMap<String, Object> params) {
+		synchronized (httpClient) {
+			HttpResult result = new HttpResult();
+    		try {
+                String urlWithParams = SERVER_IP + request + "?";
+                
+                if(params != null) {
+                    Set<String> keys = params.keySet();
+                    for(String key : keys) {
+                    	String value = params.get(key).toString();
+                    	urlWithParams = urlWithParams + key + "=" + value + "&";
                     }
-				}
+                }
+
+                urlWithParams = urlWithParams.substring(0, urlWithParams.length()-1);
+
+                Log.i(TAG_CONNECTION, "SEND GET REQUEST: " + urlWithParams);
+
+    			HttpGet httpGet = new HttpGet(urlWithParams);
+    			HttpResponse response = httpClient.execute(httpGet);
+
+                int statusCode = response.getStatusLine().getStatusCode();   
+                
+                if(statusCode == 200 || statusCode == 304) {
+                	final String responsedString = EntityUtils.toString(response.getEntity(), "utf-8");
+                	Log.i(TAG_CONNECTION, "Received: " + responsedString);
+                    result.result = new JSONObject(responsedString);
+                    result.success = result.result.getBoolean("success");
+                }
+    		} catch (JSONException e) {
+    			e.printStackTrace();
+            } catch (IOException e) {
+            	e.printStackTrace();
             }
-        }).start();
-    }
-	
-	protected static <T> void sendPostRequestAsync(final String request, final HashMap<String, Object> params, final HttpRequestDelegate<T> delegate) {
-        new Thread(new Runnable() {
-            public void run() {
-            	HttpResult result = sendPostRequest(request, params);
-            	delegate.didGetResponse(result.success, result.responsedString);
-            }
-        }).start();
+    		
+    		return result;
+		}
     }
 
 	protected static HttpResult sendPostRequest(final String request, final HashMap<String, Object> params) {
@@ -155,36 +136,22 @@ public class ConnectionHelper {
                 
                 if(statusCode == 200 || statusCode == 304) {
                 	if (responsedString != null) {
-                        
                         Log.i(TAG_CONNECTION, "Received: " + responsedString);
-                        
-                        if(responsedString.startsWith("SC")) {
-                        	result.success = true;
-                        } else {
-                        	result.success = false;
-                        }
-                        
-                        result.responsedString = responsedString;
-                    } else {
-                    	result.success = false;
-                        result.responsedString = null;
+                        result.result = new JSONObject(responsedString);
+                        result.success = result.result.getBoolean("success");
                     }
                 }
-                else {
-                	result.success = false;
-                    result.responsedString = String.format("Error %d, %s", statusCode, responsedString);
-                }
-            } catch (Exception e) {
-            	Log.e(TAG_CONNECTION, "POST REQUEST EXCEPTION: " + e.getMessage());
-
-            	result.success = false;
-                result.responsedString = e.getMessage();
+            } catch(IOException e) {
+            	e.printStackTrace();
+            } catch(JSONException e) {
+            	e.printStackTrace();
             }
             return result;
     	}
     }
     
-    protected static <T> void sendMultipartPostRequest(final String request, final HashMap<String, Object> params, final HttpRequestDelegate<T> delegate) {
+	/*
+    protected static <T> void sendMultipartPostRequest(final String request, final HashMap<String, Object> params, final HttpRequestDelegate delegate) {
         new Thread(new Runnable() {
             public void run() {
 		    	try {
@@ -263,6 +230,7 @@ public class ConnectionHelper {
             }
         }).start();
     }
+    */
     
     private static String convertStreamToString(InputStream is) {
         try {

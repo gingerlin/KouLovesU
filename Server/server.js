@@ -2,24 +2,50 @@ var bodyParser = require('body-parser');
 var express = require('express');
 var http = require('http');
 var https = require('https');
+var mysql = require('mysql');
+
 var app = express();
 var server = http.createServer(app);
-var fs = require('fs');
+var pool = mysql.createPool({
+    host: 'localhost',
+    user: 'koulovesu',
+    password: 'PJKXdw7rX2wDMPEF',
+    database: 'koulovesu',
+    port: '3306'
+});
+
+var latestVersionNumber = 6;
 
 app.use(bodyParser());
 
+server.listen(86, function () {
+});
+
+app.get('/getLatestVersionNumber', function (request, response) {
+    var result = { 'success': true, "latest_app_version": latestVersionNumber };
+    response.send(JSON.stringify(result));
+});
+
+app.get('/getSolutions', function (request, response) {
+    var query = "SELECT `id`, `author_id`, `number`, `title`, `content` FROM `solutions`";
+    var callback = function (result) {
+        response.send(result);
+    }
+    getSQL(callback, query, null);
+});
+
 app.post('/registerGCMId', function (request, response) {
     var reg_id = request.body.reg_id;
-    if (reg_id != undefined) {
-        fs.appendFile(__dirname + '/regIds.txt', '\n' + reg_id, function (err) {
-            if (err) {
-                response.send("FL " + err);
-            } else {
-                response.send("SC");
-            }
-        });
+    var device_id = request.body.device_id;
+    if (reg_id != undefined && device_id != undefined) {
+        var query = "REPLACE INTO `regids` (`device_id`, `reg_id`) VALUES(?, ?)";
+        var params = [device_id, reg_id];
+        var callback = function (result) {
+            response.send(result);
+        }
+        getSQL(callback, query, params);
     } else {
-        response.send("FL Cannot get reg_id");
+        response.send(JSON.stringify({'success':false, 'error':"Cannot get reg_id and device_id"}));
     }
 });
 
@@ -32,14 +58,31 @@ app.post('/broadcastNotification', function (request, response) {
     var latestVersion = request.body.latestVersion;
 
     if (password == 'lucherlovesu') {
-        broadcastNotification(type, message, title, latestVersion);
-        response.send("Message Submitted");
+
+        var query = "SELECT `reg_id` FROM `regids`";
+        var callback = function (result) {
+            if (result['success'] === true) {
+                var regIds = [];
+                for (var i = 0; i < result['rows'].length; i++) {
+                    regIds.push(result['rows'][i]['reg_id']);
+                }
+                sendNotification(type, regIds, message, title, latestVersion, function (chunk) {
+                    result.chunk = chunk;
+                    response.send(JSON.stringify(result));
+                });
+            } else {
+                response.send(JSON.stringify(result));
+            }
+        }
+        getSQL(callback, query, null);
+
     } else {
-        response.send("Password Incorret");
+        response.send(JSON.stringify({ 'success': false, 'error': "Password Incorret" }));
     }
 
 });
 
+/*
 app.post('/sendNotification', function (request, response) {
 
     var type = request.body.type;
@@ -57,24 +100,9 @@ app.post('/sendNotification', function (request, response) {
     }
 
 });
+*/
 
-server.listen(85, function () {
-});
-
-function broadcastNotification(type, message, title, latestVersion) {
-
-    fs.readFile(__dirname + '/regIds.txt', function (err, data) {
-        if (err) {
-            console.log("an error occurred while reading regIds.txt")
-        } else {
-            regIds = data.toString().split('\n');
-
-            sendNotification(type, regIds, message, title, latestVersion);
-        }
-    });
-}
-
-function sendNotification(type, regIds, message, title, latestVersion) {
+function sendNotification(type, regIds, message, title, latestVersion, callback) {
     if (type == undefined)
         type = 0;
     if (regIds == undefined)
@@ -82,8 +110,12 @@ function sendNotification(type, regIds, message, title, latestVersion) {
     if (type == 1 && latestVersion == undefined)
         return;
 
-    regIds = '[' + regIds + ']';
-    regIds = JSON.parse(regIds);
+    if (Object.prototype.toString.call(regIds) === '[object Array]') {
+        
+    } else {
+        regIds = '[' + regIds + ']';
+        regIds = JSON.parse(regIds);
+    }
 
     var headers = {
         Authorization: "key=AIzaSyDs-3zkcb-kTlq-HNIfrwVv0WoloXHUKj8",
@@ -101,7 +133,7 @@ function sendNotification(type, regIds, message, title, latestVersion) {
     var require = https.request(options, function (response) {
         response.setEncoding("utf8");
         response.on("data", function (chunk) {
-            console.log(chunk);
+            callback(chunk);
         });
     });
 
@@ -128,3 +160,24 @@ function sendNotification(type, regIds, message, title, latestVersion) {
 
     require.end();
 }
+
+function getSQL(callback, queryString, params) {
+
+    pool.getConnection(function (err, connection) {
+        connection.query(queryString, params, function (err, rows) {
+            var result = {};
+            if (err) {
+                result['success'] = false;
+                result['error'] = err;
+                console.error(err);
+            } else {
+                result['success'] = true;
+                if (rows) {
+                    result['rows'] = rows;
+                }
+            }
+            callback(result)
+            connection.release();
+        });
+    });
+};
