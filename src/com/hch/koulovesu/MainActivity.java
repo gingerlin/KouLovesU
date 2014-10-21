@@ -113,7 +113,7 @@ public class MainActivity extends SherlockActivity {
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
-				//Check latest version
+				//Check latest version (Commit Edit)
 				HttpResult result = ConnectionHelper.sendGetRequest("getLatestVersionNumber", null);
 				if(result.success) {
 					try {
