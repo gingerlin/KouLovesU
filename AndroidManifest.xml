@@ -26,7 +26,7 @@
         <activity
             android:name="com.hch.koulovesu.MainActivity"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Sherlock" >
+            android:theme="@style/Theme.KouLovesU" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -37,7 +37,7 @@
         <activity
             android:name="com.hch.koulovesu.ViewActivity"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Sherlock" >
+            android:theme="@style/Theme.KouLovesU" >
         </activity>
         
         <receiver

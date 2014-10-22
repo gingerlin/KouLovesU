@@ -5,12 +5,22 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.security.MessageDigest;
 import java.util.Calendar;
 import java.util.TimeZone;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
+import android.graphics.Bitmap.Config;
+import android.graphics.PorterDuff.Mode;
 import android.os.Environment;
 
 public class Utils {
@@ -153,5 +163,98 @@ public class Utils {
 	    	cacheDirectory = context.getCacheDir();  
 	    }
 	    return new File(cacheDirectory, "cache");
+	}
+	
+	public static int calculateInSampleSize( BitmapFactory.Options options, int reqWidth, int reqHeight) {
+	    // Raw height and width of image
+	    final int height = options.outHeight;
+	    final int width = options.outWidth;
+	    int inSampleSize = 1;
+	
+	    if (height > reqHeight || width > reqWidth) {
+	
+	        final int halfHeight = height / 2;
+	        final int halfWidth = width / 2;
+	
+	        // Calculate the largest inSampleSize value that is a power of 2 and keeps both
+	        // height and width larger than the requested height and width.
+	        while ((halfHeight / inSampleSize) > reqHeight
+	                && (halfWidth / inSampleSize) > reqWidth) {
+	            inSampleSize *= 2;
+	        }
+	    }
+	
+	    return inSampleSize;
+	}
+	
+	public static final String getMD5(final String s) {
+	    final String MD5 = "MD5";
+	    try {
+	        // Create MD5 Hash
+	        MessageDigest digest = java.security.MessageDigest.getInstance(MD5);
+	        digest.update(s.getBytes());
+	        byte messageDigest[] = digest.digest();
+
+	        // Create Hex String
+	        StringBuilder hexString = new StringBuilder();
+	        for (byte aMessageDigest : messageDigest) {
+	            String h = Integer.toHexString(0xFF & aMessageDigest);
+	            while (h.length() < 2) {
+	                h = "0" + h;
+	            }
+	            hexString.append(h);
+	        }
+	        return hexString.toString();
+
+	    } catch (Exception e) {
+	        e.printStackTrace();
+	    }
+	    return "";
+	}
+	
+	public static Bitmap createThumbnail(Bitmap sourceBitmap, int radius) {
+		
+		if(sourceBitmap == null) {
+			return null;
+		}
+		
+		Bitmap croppedBitmap;
+	    
+	    int sourceWidth = sourceBitmap.getWidth();
+	    int sourceHeight = sourceBitmap.getHeight();
+	    	
+    	int scaledBitmapWidth = (int) ((float) sourceWidth / sourceHeight * radius);
+    	Bitmap scaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledBitmapWidth, radius, false);
+    	
+    	if(scaledBitmapWidth == radius) {
+    		croppedBitmap = scaledBitmap;
+    	} else {
+    		croppedBitmap = Bitmap.createBitmap(scaledBitmap, (int)((float)(scaledBitmapWidth - radius) / 2), 0, radius, radius);
+    		scaledBitmap.recycle();
+    	}
+	    
+	    
+	    Bitmap output = Bitmap.createBitmap(radius, radius, Config.ARGB_8888);
+	    Canvas canvas = new Canvas(output);
+	    
+	    final Paint paint = new Paint();
+	    final Rect rect = new Rect(0, 0, radius, radius);
+	
+	    paint.setAntiAlias(true);
+	    paint.setFilterBitmap(true);
+	    paint.setDither(true);
+	    canvas.drawARGB(0, 0, 0, 0);
+	    paint.setColor(Color.parseColor("#BAB399"));
+	    canvas.drawCircle(
+	    		radius / 2 + 0.7f,
+	    		radius / 2 + 0.7f,
+	    		radius / 2+0.1f,
+	    		paint);
+	    paint.setXfermode(new PorterDuffXfermode(Mode.SRC_IN));
+	    canvas.drawBitmap(croppedBitmap, rect, rect, paint);
+	    
+	    croppedBitmap.recycle();
+	
+	    return output;
 	}
 }

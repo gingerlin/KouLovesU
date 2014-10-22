@@ -8,13 +8,12 @@ import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.UUID;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 
 import com.actionbarsherlock.app.ActionBar;
@@ -28,41 +27,34 @@ import com.google.android.gms.gcm.GoogleCloudMessaging;
 import com.hch.koulovesu.ConnectionHelper.HttpResult;
 import com.viewpagerindicator.TitlePageIndicator;
 
-import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.support.v4.view.PagerAdapter;
 import android.support.v4.view.ViewPager;
-import android.text.TextUtils.TruncateAt;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
-import android.widget.AdapterView.OnItemClickListener;
-import android.widget.BaseAdapter;
-import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.TextView;
 import android.widget.Toast;
-
+import android.widget.AdapterView.OnItemClickListener;
 
 public class MainActivity extends SherlockActivity {
 
 	private static final int REQUEST_GCM_ERROR_DIALOG = 0;
-	private ArrayList<Sector> sectors = new ArrayList<Sector>();
-	private SectorListAdapter listAdapter;
+	private SectorListAdapter sectorListAdapter;
+	private SolutionListAdapter solutionListAdapter;
 	private Handler handler;
 	
-	private int maxWeek = 0;
-	
-	private ListView subjectListView;
+	private ListView sectorListView;
 	private ListView solutionListView;
 	private ViewPager viewPager;
 	
@@ -80,18 +72,24 @@ public class MainActivity extends SherlockActivity {
 		actionBar.setDisplayHomeAsUpEnabled(false);
 		actionBar.setHomeButtonEnabled(true);
 		
-		subjectListView = new ListView(this);
-		listAdapter = new SectorListAdapter(subjectListView);
-		subjectListView.setAdapter(listAdapter);
+		BitmapCache.initialize(this);
 		
+		sectorListView = new ListView(this);
 		solutionListView = new ListView(this);
+		
+		sectorListAdapter = new SectorListAdapter(this);
+		sectorListView.setAdapter(sectorListAdapter);
+		
+		solutionListAdapter = new SolutionListAdapter(this);
+		solutionListView.setAdapter(solutionListAdapter);
+		
+		sectorListView.setOnItemClickListener(onItemClickListener);
+		solutionListView.setOnItemClickListener(onItemClickListener);
 		
 		viewPager = (ViewPager) findViewById(R.id.viewpager);
 		viewPager.setAdapter(pagerAdapter);
 		
 		((TitlePageIndicator)findViewById(R.id.indicator)).setViewPager(viewPager);
-		
-		
 		
 		handler = new Handler();
 		
@@ -113,53 +111,36 @@ public class MainActivity extends SherlockActivity {
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
-				//Check latest version (Commit Edit)
-				HttpResult result = ConnectionHelper.sendGetRequest("getLatestVersionNumber", null);
-				if(result.success) {
-					try {
-						int latestAppVersion = result.result.getInt("latest_app_version");
-						int currentAppVersion = Utils.getAppVersion(getApplicationContext());
-						
-						if(latestAppVersion > currentAppVersion) {
-							final String appPackageName = getPackageName();
-							Intent intent;
-							try {
-							    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + appPackageName));
-							} catch (android.content.ActivityNotFoundException anfe) {
-							    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://play.google.com/store/apps/details?id=" + appPackageName));
-							}
-							MainActivity.this.startActivity(intent);
-							handler.post(new Runnable() {
-								@Override
-								public void run() {
-									Toast.makeText(getApplicationContext(), "請更新至最新的版本", Toast.LENGTH_LONG).show();
-								}
-							});
-							finish();
-							return;
-						}
-					} catch (JSONException e) {
-						e.printStackTrace();
-					}
-				}
+				//Check for latest app version
+				checkLatestVersion();
 				
-				//Fetch cached contents
+				//Fetch cached sector contents
 				final String cachedContent = Utils.readFromDisk(MainActivity.this);
 				if(cachedContent != null && !cachedContent.isEmpty()) {
+					final ArrayList<Sector> sectors = getSectorsFromString(cachedContent);
 					handler.post(new Runnable() {
 						@Override
 						public void run() {
-							handleDataString(cachedContent);
+							sectorListAdapter.update(sectors);
 						}
 			        });
 				}
 				
-				//Update from the Internet
+				//Update sectors from the Internet
 				SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
 				int lastUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, 0);
 				if(Utils.getCurrentTimestamp() - lastUpdateTimestamp >= Constants.CONFIG_UPDATE_INTERVAL) {
-					update();
+					tryUpdateSectorsFromInternet(cachedContent == null || cachedContent.isEmpty());
 				}
+				
+				//Update solutions
+				final ArrayList<Solution> solutions = getSolutionsFromServer();
+				handler.post(new Runnable(){
+					@Override
+					public void run() {
+						solutionListAdapter.update(solutions);
+					}
+				});
 			}
 		}).start();
 	}
@@ -177,11 +158,42 @@ public class MainActivity extends SherlockActivity {
 	public boolean onOptionsItemSelected(MenuItem item) {
 		switch(item.getItemId()) {
 		case 0:
-			update();
+			tryUpdateSectorsFromInternet(false);
 			break;
 		}
 		
 		return super.onOptionsItemSelected(item);
+	}
+	
+	private void checkLatestVersion() {
+		HttpResult result = ConnectionHelper.sendGetRequest("getLatestVersionNumber", true, null);
+		if(result.success) {
+			try {
+				int latestAppVersion = result.result.getInt("latest_app_version");
+				int currentAppVersion = Utils.getAppVersion(getApplicationContext());
+				
+				if(latestAppVersion > currentAppVersion) {
+					final String appPackageName = getPackageName();
+					Intent intent;
+					try {
+					    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + appPackageName));
+					} catch (android.content.ActivityNotFoundException anfe) {
+					    intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://play.google.com/store/apps/details?id=" + appPackageName));
+					}
+					MainActivity.this.startActivity(intent);
+					handler.post(new Runnable() {
+						@Override
+						public void run() {
+							Toast.makeText(getApplicationContext(), "請更新至最新的版本", Toast.LENGTH_LONG).show();
+						}
+					});
+					finish();
+					return;
+				}
+			} catch (JSONException e) {
+				e.printStackTrace();
+			}
+		}
 	}
 	
 	private void tryRegisterGCM() {
@@ -268,7 +280,7 @@ public class MainActivity extends SherlockActivity {
 	}
 
 	
-	private void update() {
+	private void tryUpdateSectorsFromInternet(final boolean forceUpdate) {
 		
 		if(isUpdating) {
 			return;
@@ -308,23 +320,39 @@ public class MainActivity extends SherlockActivity {
 				        }
 				        final String responsedText = responsedTextBuilder.toString();
 				        
-				        handler.post(new Runnable() {
-							@Override
-							public void run() {
-								try {
-									handleDataString(responsedText);
-									Utils.saveToDisk(MainActivity.this, responsedText);
-									
-									Toast.makeText(MainActivity.this, "已更新", Toast.LENGTH_SHORT).show();
-									
-									Editor preferencesEditor = PreferenceManager.getDefaultSharedPreferences(MainActivity.this).edit();
-									preferencesEditor.putInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
-									preferencesEditor.apply();
-								} catch (Exception e) {
-									Toast.makeText(MainActivity.this, "無法更新 " + e.getMessage(), Toast.LENGTH_SHORT).show();
-								}
-							}
-				        });
+				        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+				        
+				        final String newContentHash = Utils.getMD5(responsedText);
+				        final String oldContentHash = preferences.getString(Constants.PREFERENCE_LAST_SECTORS_CONTENT_HASH, null);
+				        
+				        if(forceUpdate || !newContentHash.equals(oldContentHash)) {
+				        	
+				        	Runnable runnable;
+				        	try {
+					        	final ArrayList<Sector> sectors = getSectorsFromString(responsedText);
+					        	Utils.saveToDisk(MainActivity.this, responsedText);
+					        	Editor preferencesEditor = PreferenceManager.getDefaultSharedPreferences(MainActivity.this).edit();
+								preferencesEditor.putInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
+								preferencesEditor.putString(Constants.PREFERENCE_LAST_SECTORS_CONTENT_HASH, newContentHash);
+								preferencesEditor.apply();
+								runnable = new Runnable() {
+									@Override
+									public void run() {
+										sectorListAdapter.update(sectors);
+										Toast.makeText(MainActivity.this, "已更新", Toast.LENGTH_SHORT).show();
+									}
+								};			        	
+				        	} catch (final Exception e) {
+				        		runnable = new Runnable() {
+									@Override
+									public void run() {
+										sectorListAdapter.notifyDataSetChanged();
+										Toast.makeText(MainActivity.this, "無法更新 " + e.getMessage(), Toast.LENGTH_SHORT).show();
+									}
+								};
+				        	}
+					        handler.post(runnable);
+				        }
 					} catch (IOException e) {
 						e.printStackTrace();
 					} catch (Exception e) {
@@ -351,7 +379,8 @@ public class MainActivity extends SherlockActivity {
 		}).start();
 	}
 	
-	private void handleDataString(String dataString) {
+	private ArrayList<Sector> getSectorsFromString(String dataString) {
+		ArrayList<Sector> sectors = new ArrayList<Sector>();
 		ArrayList<String> sectorStrings = new ArrayList<String>();
 		
 		char previousChar = 0;
@@ -385,6 +414,7 @@ public class MainActivity extends SherlockActivity {
 		}
 		
 		sectors.clear();
+		int maxWeek = -1;
 		int currentWeek = -1;
 		
 		for(String sectorString : sectorStrings) {
@@ -437,7 +467,25 @@ public class MainActivity extends SherlockActivity {
 			sectors.add(sector);
 		}
 		
-		listAdapter.notifyDataSetChanged();
+		sectorListAdapter.setHighlightWeek(maxWeek);
+		
+		return sectors;
+	}
+	
+	private ArrayList<Solution> getSolutionsFromServer() {
+		ArrayList<Solution> result = new ArrayList<Solution>();
+		HttpResult httpResult = ConnectionHelper.sendGetRequest("getSolutions", true, null);
+		if(httpResult != null && httpResult.success) {
+			try {
+				JSONArray rows = httpResult.result.getJSONArray("rows");
+				for(int i = 0, length = rows.length(); i < length; i++) {
+					result.add(new Solution(rows.getJSONObject(i)));
+				}
+			} catch(JSONException e) {
+				e.printStackTrace();
+			}
+		}
+		return result;
 	}
 	
 	private PagerAdapter pagerAdapter = new PagerAdapter() {
@@ -466,8 +514,8 @@ public class MainActivity extends SherlockActivity {
 		public Object instantiateItem(ViewGroup container, int position) {
 			switch(position) {
 			case 0:
-				container.addView(subjectListView);
-				return subjectListView;
+				container.addView(sectorListView);
+				return sectorListView;
 			case 1:
 				container.addView(solutionListView);
 				return solutionListView;
@@ -479,7 +527,7 @@ public class MainActivity extends SherlockActivity {
 		public void destroyItem(ViewGroup container, int position, Object object) {
 			switch(position) {
 			case 0:
-				container.removeView(subjectListView);
+				container.removeView(sectorListView);
 				break;
 			case 1:
 				container.removeView(solutionListView);
@@ -488,93 +536,25 @@ public class MainActivity extends SherlockActivity {
 		}
 	};
 	
-	
-	class SectorListAdapter extends BaseAdapter {
-		private class ViewHolder {
-			TextView titleTextView;
-			TextView subTitleTextView;
-		}
-		
-		public SectorListAdapter(ListView listView) {
-			listView.setOnItemClickListener(onItemClickListener);
-		}
-		
+	private OnItemClickListener onItemClickListener = new OnItemClickListener() {
 		@Override
-		public int getCount() {
-			return sectors.size();
-		}
-
-		@Override
-		public Object getItem(int position) {
-			return sectors.get(position);
-		}
-
-		@Override
-		public long getItemId(int position) {
-			return 0;
-		}
-
-		@Override
-		public View getView(int position, View convertView, ViewGroup parent) {
-			
-			ViewHolder viewHolder;
-			Sector sector = sectors.get(position);
-			
-			if(convertView == null) {
-				convertView = MainActivity.this.getLayoutInflater().inflate(android.R.layout.simple_list_item_2, null);
-				viewHolder = new ViewHolder();
-				viewHolder.titleTextView = (TextView)convertView.findViewById(android.R.id.text1);
-				viewHolder.subTitleTextView = (TextView)convertView.findViewById(android.R.id.text2);
-				convertView.setTag(viewHolder);
-			} else {
-				viewHolder = (ViewHolder)convertView.getTag();
-			}
-			viewHolder.titleTextView.setText(sector.getTitle());
-			viewHolder.subTitleTextView.setText(sector.message);
-			
-			viewHolder.subTitleTextView.setEllipsize(TruncateAt.END);
-			viewHolder.subTitleTextView.setSingleLine();
-			if(maxWeek == sector.week) {
-				viewHolder.titleTextView.setTextColor(0xFF66CCCC);
-			} else {
-				viewHolder.titleTextView.setTextColor(Color.GRAY);
-			}
-			viewHolder.subTitleTextView.setTextColor(Color.DKGRAY);
-			
-			convertView.setPadding(25, 0, 25, 0);
-			
-			return convertView;
-		}
-		
-		@Override
-		public void notifyDataSetChanged() {
-			Collections.sort(sectors, comparator);
-			super.notifyDataSetChanged();
-		}
-		
-		private Comparator<Sector> comparator = new Comparator<Sector>() {
-			
-			@Override
-			public int compare(Sector lhs, Sector rhs) {
-				if(lhs.number == -1 && lhs.week != -1 || rhs.number == -1 && rhs.week != -1) {
-					return Integer.valueOf(rhs.week).compareTo(lhs.week);
-				} else {
-					return Integer.valueOf(rhs.number).compareTo(lhs.number);
-				}
-			}
-		};
-		
-		private OnItemClickListener onItemClickListener = new OnItemClickListener() {
-			@Override
-			public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-				notifyDataSetChanged();
-				
+		public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+			if(parent == sectorListView) {
+				Sector sector = (Sector) sectorListAdapter.getItem(position);
 				Intent intent = new Intent();
 				intent.setClass(MainActivity.this, ViewActivity.class);
-				intent.putExtra("title", sectors.get(position).getTitle());
-				intent.putExtra("message", sectors.get(position).message);
+				intent.putExtra("title", sector.getTitle());
+				intent.putExtra("content", sector.message);
+				MainActivity.this.startActivity(intent);
+			} else if(parent == solutionListView) {
+				Solution solution = (Solution)solutionListAdapter.getItem(position);
+				Intent intent = new Intent();
+				intent.setClass(MainActivity.this, ViewActivity.class);
+				intent.putExtra("title", solution.getTitle());
+				intent.putExtra("userId", solution.author.getUserId());
+				intent.putExtra("content", solution.content);
 				MainActivity.this.startActivity(intent);
 			}
-		};
+		}
 	};
 }

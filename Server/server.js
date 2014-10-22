@@ -18,7 +18,7 @@ var latestVersionNumber = 6;
 
 app.use(bodyParser());
 
-server.listen(86, function () {
+server.listen(85, function () {
 });
 
 app.get('/getLatestVersionNumber', function (request, response) {

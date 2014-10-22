@@ -1,5 +1,6 @@
 package com.hch.koulovesu;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +21,7 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.BufferedHttpEntity;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.params.BasicHttpParams;
@@ -31,6 +33,8 @@ import org.apache.http.util.EntityUtils;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.util.Log;
 
 public class ConnectionHelper {
@@ -63,11 +67,47 @@ public class ConnectionHelper {
         JSONObject result = null;
     }
 	
-	protected static HttpResult sendGetRequest(final String request, final HashMap<String, Object> params) {
+	public static synchronized Bitmap getImage(String urlWithParams, int reqWidth, int reqHeight) {
+		synchronized (httpClient) {
+			HttpGet httpGet = new HttpGet(urlWithParams);
+			try {
+				HttpResponse response = httpClient.execute(httpGet);
+				
+				BufferedHttpEntity responseEntity = new BufferedHttpEntity(response.getEntity());
+				
+				 // First decode with inJustDecodeBounds=true to check dimensions
+			    final BitmapFactory.Options options = new BitmapFactory.Options();
+			    options.inJustDecodeBounds = true;
+			    
+			    BufferedInputStream inputStream = new BufferedInputStream(responseEntity.getContent());
+			    inputStream.mark(inputStream.available());
+			    BitmapFactory.decodeStream(inputStream, null, options);
+			    
+			    // Calculate inSampleSize
+			    options.inSampleSize = Utils.calculateInSampleSize(options, reqWidth, reqHeight);
+	
+			    // Decode bitmap with inSampleSize set
+			    options.inJustDecodeBounds = false;
+			    inputStream.reset();
+			    Bitmap bitmap = BitmapFactory.decodeStream(inputStream, null, options);
+			    inputStream.close();
+			    return bitmap;
+			} catch (Exception e) {
+				e.printStackTrace();
+				Log.e(TAG_CONNECTION, e.getMessage());
+				return null;
+			}
+		}
+    }
+	
+	protected static HttpResult sendGetRequest(final String request, boolean toServer, final HashMap<String, Object> params) {
 		synchronized (httpClient) {
 			HttpResult result = new HttpResult();
     		try {
-                String urlWithParams = SERVER_IP + request + "?";
+                String urlWithParams = request + "?";
+                if(toServer) {
+                	urlWithParams = SERVER_IP + urlWithParams;
+                }
                 
                 if(params != null) {
                     Set<String> keys = params.keySet();
@@ -90,7 +130,11 @@ public class ConnectionHelper {
                 	final String responsedString = EntityUtils.toString(response.getEntity(), "utf-8");
                 	Log.i(TAG_CONNECTION, "Received: " + responsedString);
                     result.result = new JSONObject(responsedString);
-                    result.success = result.result.getBoolean("success");
+                    if(toServer) {
+                    	result.success = result.result.getBoolean("success");
+                    } else {
+                    	result.success = true;
+                    }
                 }
     		} catch (JSONException e) {
     			e.printStackTrace();
