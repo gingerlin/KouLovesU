@@ -1,7 +1,5 @@
 package com.hch.koulovesu;
 
-import java.security.acl.LastOwnerException;
-
 import com.google.android.gms.gcm.GoogleCloudMessaging;
 
 import android.app.IntentService;
@@ -66,10 +64,10 @@ public class GcmIntentService extends IntentService {
 	
 	private void sendNotification(String message, String title) {
 		
-		//int notificationId = (int) (Integer.MIN_VALUE + Math.pow(2, 32) * Math.random());
 		int notificationId = Utils.getCurrentTimestamp();
 		
-		Log.i(Constants.TAG_GCM, "notification id : " + notificationId);
+		if(message == null)
+			message = getResources().getString(R.string.app_name);
 		
 		NotificationManager notificationManager = (NotificationManager)this.getSystemService(Context.NOTIFICATION_SERVICE);
 
@@ -80,11 +78,9 @@ public class GcmIntentService extends IntentService {
 	        .setSmallIcon(R.drawable.app_icon)
 	        .setAutoCancel(true)
 	        .setStyle(new NotificationCompat.BigTextStyle()
-	        	.bigText(getResources().getString(R.string.app_name)))
+	        	.bigText(message))
+	        .setContentText(message)
 	        .setContentTitle(title);
-	    if(message != null) {
-	    	builder.setContentText(message);
-	    }
 
         builder.setContentIntent(contentIntent);
         notificationManager.notify(notificationId, builder.build());
@@ -97,6 +93,9 @@ public class GcmIntentService extends IntentService {
 		if(latestVersion > Utils.getAppVersion(this)) {
 			
 			int notificationId = (int) (Integer.MIN_VALUE + Math.pow(2, 32) * Math.random());
+			
+			if(message == null)
+				message = Constants.GCM_MESSAGE_NEW_VERSION;
 			
 			final String appPackageName = getPackageName();
 			Intent intent;
@@ -115,13 +114,9 @@ public class GcmIntentService extends IntentService {
 		        .setSmallIcon(R.drawable.app_icon)
 		        .setAutoCancel(true)
 		        .setStyle(new NotificationCompat.BigTextStyle()
-		        	.bigText(getResources().getString(R.string.app_name)))
+		        	.bigText(message))
+		        .setContentText(message)
 		        .setContentTitle(title);
-		        
-		    if(message == null) {
-		    	message = Constants.GCM_MESSAGE_NEW_VERSION;
-		    }
-		    builder.setContentText(message);
 	
 	        builder.setContentIntent(contentIntent);
 	        notificationManager.notify(notificationId, builder.build());
