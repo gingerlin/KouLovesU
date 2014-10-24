@@ -3,6 +3,7 @@ var express = require('express');
 var http = require('http');
 var https = require('https');
 var mysql = require('mysql');
+var fs = require('fs');
 
 var app = express();
 var server = http.createServer(app);
@@ -14,22 +15,49 @@ var pool = mysql.createPool({
     port: '3306'
 });
 
-var latestVersionNumber = 6;
+var logger = require('tracer').console({
+    format: "{{timestamp}} <{{title}}> {{message}} ({{file}}:{{line}})",
+    dateformat: "yyyy-mm-dd' 'HH:MM:ss",
+    transport: function (data) {
+        console.log(data.output);
+        fs.open(__dirname + '/server.log', 'a', 0666, function (e, id) {
+            fs.write(id, data.output + "\n", null, 'utf8', function () {
+                fs.close(id, function () {
+                    if (data.output.indexOf("uncaughtException") != -1) process.exit(1);
+                });
+            });
+        });
+    }
+});
+
+var latestVersionNumber = 7;
 
 app.use(bodyParser());
 
 server.listen(85, function () {
+    logger.log("Server Start");
+});
+
+app.use(function (request, response, next) {
+    var ip = request.headers['x-forwarded-for'] || request.connection.remoteAddress;
+    logger.log(ip + " : " + request.url);
+    if (Object.keys(request.body).length != 0) {
+        logger.log(request.body);
+    }
+    next();
 });
 
 app.get('/getLatestVersionNumber', function (request, response) {
     var result = { 'success': true, "latest_app_version": latestVersionNumber };
     response.send(JSON.stringify(result));
+    logger.log(JSON.stringify(result));
 });
 
 app.get('/getSolutions', function (request, response) {
     var query = "SELECT `id`, `author_id`, `number`, `title`, `content` FROM `solutions`";
     var callback = function (result) {
         response.send(result);
+        logger.log(result);
     }
     getSQL(callback, query, null);
 });
@@ -42,10 +70,13 @@ app.post('/registerGCMId', function (request, response) {
         var params = [device_id, reg_id];
         var callback = function (result) {
             response.send(result);
+            logger.log(result);
         }
         getSQL(callback, query, params);
     } else {
-        response.send(JSON.stringify({'success':false, 'error':"Cannot get reg_id and device_id"}));
+        var result = JSON.stringify({ 'success': false, 'error': "Cannot get reg_id and device_id" });
+        response.send(result);
+        logger.log(result);
     }
 });
 
@@ -69,20 +100,23 @@ app.post('/broadcastNotification', function (request, response) {
                 sendNotification(type, regIds, message, title, latestVersion, function (chunk) {
                     result.chunk = chunk;
                     response.send(JSON.stringify(result));
+                    logger.log(JSON.stringify(result));
                 });
             } else {
                 response.send(JSON.stringify(result));
+                logger.log(JSON.stringify(result));
             }
         }
         getSQL(callback, query, null);
 
     } else {
-        response.send(JSON.stringify({ 'success': false, 'error': "Password Incorret" }));
+        var result = JSON.stringify({ 'success': false, 'error': "Password Incorret" });
+        response.send(result);
+        logger.log(result);
     }
 
 });
 
-/*
 app.post('/sendNotification', function (request, response) {
 
     var type = request.body.type;
@@ -93,14 +127,21 @@ app.post('/sendNotification', function (request, response) {
     var latestVersion = request.body.latestVersion;
 
     if (password == 'lucherlovesu') {
-        sendNotification(type, regIds, message, title, latestVersion);
-        response.send("Message Submitted");
+        sendNotification(type, regIds.split(','), message, title, latestVersion, function (chunk) {
+            result = {
+                'success': true,
+                'chunk' : chunk
+            };
+            response.send(JSON.stringify(result));
+            logger.log(JSON.stringify(result));
+        });
     } else {
-        response.send("Password Incorret");
+        var result = JSON.stringify({ 'success': false, 'error': "Password Incorret" });
+        response.send(result);
+        logger.log(result);
     }
 
 });
-*/
 
 function sendNotification(type, regIds, message, title, latestVersion, callback) {
     if (type == undefined)

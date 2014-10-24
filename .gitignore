@@ -34,3 +34,4 @@ project.properties
 
 Server/node_modules
 Server/regIds.txt
+Server/server.log
