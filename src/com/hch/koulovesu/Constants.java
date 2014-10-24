@@ -2,7 +2,10 @@ package com.hch.koulovesu;
 
 public class Constants {
 	
-	public static final int CONFIG_UPDATE_INTERVAL = 60 * 10; // in seconds
+	public static final boolean STRICT_MODE_ENABLED = false;
+	
+	public static final int CONFIG_SECTOR_UPDATE_INTERVAL = 60 * 10; // in seconds
+	public static final int CONFIG_SOLUTION_UPDATE_INTERVAL = 60 * 10;
 	public static final int GCM_TYPE_MESSAGE = 0;
 	public static final int GCM_TYPE_NEW_VERSION_AVAILABLE = 1;
 	
@@ -13,6 +16,8 @@ public class Constants {
 	public static final String PREFERENCE_DEVICE_UUID_ID				= "PREFERENCE_DEVICE_UUID_ID";
 	public static final String PREFERENCE_GCM_ID						= "PREFERENCE_GCM_ID";
 	public static final String PREFERENCE_GCM_REGISTERED_APP_VERSION	= "PREFERENCE_APP_VERSION";
-	public static final String PREFERENCE_LAST_UPDATE_TIMESTAMP			= "PREFERENCE_LAST_UPDATE_TIMESTAMP";
-	public static final String PREFERENCE_LAST_SECTORS_CONTENT_HASH		= "PREFERENCE_LAST_SECTORS_CONTENT_HASH";
+	public static final String PREFERENCE_LAST_SECTOR_UPDATE_TIMESTAMP	= "PREFERENCE_LAST_SECTOR_UPDATE_TIMESTAMP";
+	public static final String PREFERENCE_LAST_SECTORS_CONTENT			= "PREFERENCE_LAST_SECTORS_CONTENT";
+	public static final String PREFERENCE_LAST_SOLUTIONS_UPDATE_TIMESTAMP	= "PREFERENCE_LAST_SOLUTIONS_UPDATE_TIMESTAMP";
+	public static final String PREFERENCE_LAST_SOLUTIONS					= "PREFERENCE_LAST_SOLUTIONS";
 }

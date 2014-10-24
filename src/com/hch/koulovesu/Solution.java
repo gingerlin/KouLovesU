@@ -1,7 +1,9 @@
 package com.hch.koulovesu;
 
+import java.util.ArrayList;
 import java.util.Locale;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -36,6 +38,22 @@ class Solution {
 		}
 	}
 	
+	public static ArrayList<Solution> fromJSONArray(JSONArray jsonArray) throws JSONException{
+		ArrayList<Solution> result = new ArrayList<Solution>();
+		for(int i = 0, length = jsonArray.length(); i < length; i++) {
+			result.add(new Solution(jsonArray.getJSONObject(i)));
+		}
+		return result;
+	}
 	
+	public static ArrayList<Solution> fromJSONArrayString(String jsonArrayString) {
+		try {
+			JSONArray array = new JSONArray(jsonArrayString);
+			return fromJSONArray(array);
+		} catch (JSONException e) {
+			e.printStackTrace();
+			return null;
+		}
+	}
 }
 

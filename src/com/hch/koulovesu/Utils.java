@@ -25,7 +25,7 @@ import android.os.Environment;
 
 public class Utils {
 	
-	private static Object diskLock = new Object();
+	//private static Object diskLock = new Object();
 	
 	public static int getAppVersion(Context context) {
 	    try {
@@ -107,6 +107,7 @@ public class Utils {
 		return input;
 	}
 	
+	/*
 	public static String readFromDisk(Context context) {
 		synchronized (diskLock) {
 			StringBuilder text = new StringBuilder();
@@ -164,6 +165,7 @@ public class Utils {
 	    }
 	    return new File(cacheDirectory, "cache");
 	}
+	*/
 	
 	public static int calculateInSampleSize( BitmapFactory.Options options, int reqWidth, int reqHeight) {
 	    // Raw height and width of image

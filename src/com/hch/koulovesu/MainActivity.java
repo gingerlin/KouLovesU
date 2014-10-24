@@ -8,7 +8,6 @@ import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.UUID;
@@ -33,12 +32,13 @@ import android.content.SharedPreferences.Editor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.StrictMode;
 import android.preference.PreferenceManager;
 import android.support.v4.view.PagerAdapter;
 import android.support.v4.view.ViewPager;
+import android.support.v4.view.ViewPager.OnPageChangeListener;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -50,21 +50,36 @@ import android.widget.AdapterView.OnItemClickListener;
 public class MainActivity extends SherlockActivity {
 
 	private static final int REQUEST_GCM_ERROR_DIALOG = 0;
+	private static final int PAGE_SECTORS = 0;
+	private static final int PAGE_SOLUTIONS = 1;
+	private static final int ACTION_UPDATE_SECTORS = 0;
+	private static final int ACTION_UPDATE_SOLUTIONS = 1;
+	
 	private SectorListAdapter sectorListAdapter;
 	private SolutionListAdapter solutionListAdapter;
 	private Handler handler;
+	private SharedPreferences preferences;
 	
 	private ListView sectorListView;
 	private ListView solutionListView;
 	private ViewPager viewPager;
 	
-	private boolean isUpdating = false;
+	private boolean isSectorsUpdating = false;
+	private boolean isSolutionsUpdating = false;
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
 		setContentView(R.layout.activity_main);
+		
+		if(Constants.STRICT_MODE_ENABLED) {
+		StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+		        .detectAll()
+		        .penaltyLog()
+		        .penaltyDialog()
+		        .build());
+		}
 		
 		//Setup ActionBar
 		ActionBar actionBar = getSupportActionBar();
@@ -73,6 +88,8 @@ public class MainActivity extends SherlockActivity {
 		actionBar.setHomeButtonEnabled(true);
 		
 		BitmapCache.initialize(this);
+		
+		preferences = PreferenceManager.getDefaultSharedPreferences(this);
 		
 		sectorListView = new ListView(this);
 		solutionListView = new ListView(this);
@@ -86,14 +103,14 @@ public class MainActivity extends SherlockActivity {
 		sectorListView.setOnItemClickListener(onItemClickListener);
 		solutionListView.setOnItemClickListener(onItemClickListener);
 		
-		viewPager = (ViewPager) findViewById(R.id.viewpager);
+		viewPager = (ViewPager) findViewById(R.id.viewpager);		
 		viewPager.setAdapter(pagerAdapter);
 		
-		((TitlePageIndicator)findViewById(R.id.indicator)).setViewPager(viewPager);
+		TitlePageIndicator pageIndicator = ((TitlePageIndicator)findViewById(R.id.indicator)); 
+		pageIndicator.setViewPager(viewPager);
+		pageIndicator.setOnPageChangeListener(onPageChangeListener);
 		
 		handler = new Handler();
-		
-		//checkLatestVersion();
 	}
 	
 	@Override
@@ -111,11 +128,12 @@ public class MainActivity extends SherlockActivity {
 		new Thread(new Runnable() {
 			@Override
 			public void run() {
+				
 				//Check for latest app version
 				checkLatestVersion();
 				
-				//Fetch cached sector contents
-				final String cachedContent = Utils.readFromDisk(MainActivity.this);
+				//Fetch cached sector contents and solutions
+				final String cachedContent = preferences.getString(Constants.PREFERENCE_LAST_SECTORS_CONTENT, null);
 				if(cachedContent != null && !cachedContent.isEmpty()) {
 					final ArrayList<Sector> sectors = getSectorsFromString(cachedContent);
 					handler.post(new Runnable() {
@@ -126,39 +144,72 @@ public class MainActivity extends SherlockActivity {
 			        });
 				}
 				
+				final String cachedSolutions = preferences.getString(Constants.PREFERENCE_LAST_SOLUTIONS, null);
+				if(cachedSolutions != null && !cachedSolutions.isEmpty()) {
+					final ArrayList<Solution> solutions = Solution.fromJSONArrayString(cachedSolutions);
+					if(solutions != null) {
+						handler.post(new Runnable(){
+							@Override
+							public void run() {
+								solutionListAdapter.update(solutions);
+							}
+						});
+					}
+				}
+				
 				//Update sectors from the Internet
-				SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
-				int lastUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, 0);
-				if(Utils.getCurrentTimestamp() - lastUpdateTimestamp >= Constants.CONFIG_UPDATE_INTERVAL) {
-					tryUpdateSectorsFromInternet(cachedContent == null || cachedContent.isEmpty());
+				int lastUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_SECTOR_UPDATE_TIMESTAMP, 0);
+				if(Utils.getCurrentTimestamp() - lastUpdateTimestamp >= Constants.CONFIG_SECTOR_UPDATE_INTERVAL) {
+					tryUpdateSectorsFromInternet();
 				}
 				
 				//Update solutions
-				final ArrayList<Solution> solutions = getSolutionsFromServer();
-				handler.post(new Runnable(){
-					@Override
-					public void run() {
-						solutionListAdapter.update(solutions);
-					}
-				});
+				int lastSolutionUpdateTimestamp = preferences.getInt(Constants.PREFERENCE_LAST_SOLUTIONS_UPDATE_TIMESTAMP, 0);
+				if(Utils.getCurrentTimestamp() - lastSolutionUpdateTimestamp >= Constants.CONFIG_SOLUTION_UPDATE_INTERVAL) {
+					updateSolutionsFromServer();
+				}
+				
 			}
 		}).start();
 	}
-
+	
 	@Override
-	public boolean onCreateOptionsMenu(Menu menu) {
-		menu.add(Menu.NONE, 0, Menu.NONE, "Refresh")
-			.setIcon(R.drawable.ic_action_refresh)
-			.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+	public boolean onPrepareOptionsMenu(Menu menu) {
+		switch(viewPager.getCurrentItem()) {
+		case PAGE_SECTORS:
+			if(!isSectorsUpdating) {
+				menu.add(Menu.NONE, ACTION_UPDATE_SECTORS, Menu.NONE, "更新題目")
+					.setIcon(R.drawable.ic_action_refresh)
+					.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+			}
+			setProgressBarIndeterminateVisibility(isSectorsUpdating);
+			break;
+		case PAGE_SOLUTIONS:
+			if(!isSolutionsUpdating) {
+				menu.add(Menu.NONE, ACTION_UPDATE_SOLUTIONS, Menu.NONE, "更新解答")
+					.setIcon(R.drawable.ic_action_refresh)
+					.setEnabled(!isSolutionsUpdating)
+					.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+			}
+			setProgressBarIndeterminateVisibility(isSolutionsUpdating);
+			break;
+		default:
+			setProgressBarIndeterminateVisibility(false);
+			break;
+		}
 		
+	
 		return super.onCreateOptionsMenu(menu);
 	}
 	
 	@Override
 	public boolean onOptionsItemSelected(MenuItem item) {
 		switch(item.getItemId()) {
-		case 0:
-			tryUpdateSectorsFromInternet(false);
+		case ACTION_UPDATE_SECTORS:
+			tryUpdateSectorsFromInternet();
+			break;
+		case ACTION_UPDATE_SOLUTIONS:
+			updateSolutionsFromServer();
 			break;
 		}
 		
@@ -199,7 +250,6 @@ public class MainActivity extends SherlockActivity {
 	private void tryRegisterGCM() {
 		
 		//Get Device UUID
-		SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
 		SharedPreferences.Editor editor = preferences.edit();
 		
 		final String deviceId;
@@ -280,20 +330,24 @@ public class MainActivity extends SherlockActivity {
 	}
 
 	
-	private void tryUpdateSectorsFromInternet(final boolean forceUpdate) {
+	private void tryUpdateSectorsFromInternet() {
 		
-		if(isUpdating) {
+		if(isSectorsUpdating) {
 			return;
 		}
 		
-		isUpdating = true;
-		
+		isSectorsUpdating = true;
+		supportInvalidateOptionsMenu();
+		/*
 		handler.post(new Runnable() {
 			@Override
 			public void run() {
-				setSupportProgressBarIndeterminateVisibility(true);
+				if(viewPager.getCurrentItem() == PAGE_SECTORS) {
+					setSupportProgressBarIndeterminateVisibility(true);
+				}
 			}
 		});
+		*/
 		
 		new Thread(new Runnable() {
 
@@ -319,21 +373,17 @@ public class MainActivity extends SherlockActivity {
 				        	responsedTextBuilder.append(line + "\n");
 				        }
 				        final String responsedText = responsedTextBuilder.toString();
+				        				        
+				        final String oldContent = preferences.getString(Constants.PREFERENCE_LAST_SECTORS_CONTENT, null);
 				        
-				        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
-				        
-				        final String newContentHash = Utils.getMD5(responsedText);
-				        final String oldContentHash = preferences.getString(Constants.PREFERENCE_LAST_SECTORS_CONTENT_HASH, null);
-				        
-				        if(forceUpdate || !newContentHash.equals(oldContentHash)) {
+				        if(!responsedText.equals(oldContent)) {
 				        	
 				        	Runnable runnable;
 				        	try {
 					        	final ArrayList<Sector> sectors = getSectorsFromString(responsedText);
-					        	Utils.saveToDisk(MainActivity.this, responsedText);
 					        	Editor preferencesEditor = PreferenceManager.getDefaultSharedPreferences(MainActivity.this).edit();
-								preferencesEditor.putInt(Constants.PREFERENCE_LAST_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
-								preferencesEditor.putString(Constants.PREFERENCE_LAST_SECTORS_CONTENT_HASH, newContentHash);
+								preferencesEditor.putInt(Constants.PREFERENCE_LAST_SECTOR_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
+								preferencesEditor.putString(Constants.PREFERENCE_LAST_SECTORS_CONTENT, responsedText);
 								preferencesEditor.apply();
 								runnable = new Runnable() {
 									@Override
@@ -367,14 +417,17 @@ public class MainActivity extends SherlockActivity {
 						}
 					}
 				}
-				
+				/*
 				handler.post(new Runnable() {
 					@Override
 					public void run() {
-						setSupportProgressBarIndeterminateVisibility(false);
+						if(viewPager.getCurrentItem() == PAGE_SECTORS) {
+							setSupportProgressBarIndeterminateVisibility(false);
+						}
 					}
-				});
-				isUpdating = false;
+				});*/
+				isSectorsUpdating = false;
+				supportInvalidateOptionsMenu();
 			}
 		}).start();
 	}
@@ -472,29 +525,64 @@ public class MainActivity extends SherlockActivity {
 		return sectors;
 	}
 	
-	private ArrayList<Solution> getSolutionsFromServer() {
-		ArrayList<Solution> result = new ArrayList<Solution>();
-		HttpResult httpResult = ConnectionHelper.sendGetRequest("getSolutions", true, null);
-		if(httpResult != null && httpResult.success) {
-			try {
-				JSONArray rows = httpResult.result.getJSONArray("rows");
-				for(int i = 0, length = rows.length(); i < length; i++) {
-					result.add(new Solution(rows.getJSONObject(i)));
-				}
-			} catch(JSONException e) {
-				e.printStackTrace();
-			}
+	private void updateSolutionsFromServer() {
+		
+		if(isSolutionsUpdating) {
+			return;
 		}
-		return result;
+		
+		isSolutionsUpdating = true;
+		supportInvalidateOptionsMenu();
+		
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				HttpResult httpResult = ConnectionHelper.sendGetRequest("getSolutions", true, null);
+				if(httpResult != null && httpResult.success) {
+					try {
+						JSONArray rows = httpResult.result.getJSONArray("rows");
+						final ArrayList<Solution> result = Solution.fromJSONArray(rows);
+						if(result != null) {
+							Editor editor = preferences.edit();
+							editor.putInt(Constants.PREFERENCE_LAST_SOLUTIONS_UPDATE_TIMESTAMP, Utils.getCurrentTimestamp());
+							editor.putString(Constants.PREFERENCE_LAST_SOLUTIONS, rows.toString());
+							editor.apply();
+							handler.post(new Runnable(){
+								@Override
+								public void run() {
+									solutionListAdapter.update(result);
+								}
+							});
+						}
+					} catch(JSONException e) {
+						e.printStackTrace();
+					}
+				}
+				
+				isSolutionsUpdating = false;
+				supportInvalidateOptionsMenu();
+			}
+		}).start();
+		
+		
+		/*
+		handler.post(new Runnable() {
+			@Override
+			public void run() {
+				if(viewPager.getCurrentItem() == PAGE_SOLUTIONS) {
+					setSupportProgressBarIndeterminateVisibility(false);
+				}
+			}
+		});*/
 	}
 	
 	private PagerAdapter pagerAdapter = new PagerAdapter() {
 
 		public CharSequence getPageTitle(int position) {
 			switch(position) {
-			case 0:
+			case PAGE_SECTORS:
 				return "題目";
-			case 1:
+			case PAGE_SOLUTIONS:
 				return "參考解答";
 			default: 
 				return null;
@@ -513,10 +601,10 @@ public class MainActivity extends SherlockActivity {
 		
 		public Object instantiateItem(ViewGroup container, int position) {
 			switch(position) {
-			case 0:
+			case PAGE_SECTORS:
 				container.addView(sectorListView);
 				return sectorListView;
-			case 1:
+			case PAGE_SOLUTIONS:
 				container.addView(solutionListView);
 				return solutionListView;
 			default: 
@@ -526,14 +614,27 @@ public class MainActivity extends SherlockActivity {
 		
 		public void destroyItem(ViewGroup container, int position, Object object) {
 			switch(position) {
-			case 0:
+			case PAGE_SECTORS:
 				container.removeView(sectorListView);
 				break;
-			case 1:
+			case PAGE_SOLUTIONS:
 				container.removeView(solutionListView);
 				break;
 			}
 		}
+	};
+	
+	private OnPageChangeListener onPageChangeListener = new OnPageChangeListener() {
+		@Override
+		public void onPageSelected(int arg0) {
+			supportInvalidateOptionsMenu();
+		}
+		
+		@Override
+		public void onPageScrolled(int arg0, float arg1, int arg2) {}
+		
+		@Override
+		public void onPageScrollStateChanged(int arg0) {}
 	};
 	
 	private OnItemClickListener onItemClickListener = new OnItemClickListener() {
