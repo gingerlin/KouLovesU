@@ -182,7 +182,7 @@ public class MainActivity extends SherlockActivity {
 					.setIcon(R.drawable.ic_action_refresh)
 					.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 			}
-			setProgressBarIndeterminateVisibility(isSectorsUpdating);
+			setSupportProgressBarIndeterminateVisibility(isSectorsUpdating);
 			break;
 		case PAGE_SOLUTIONS:
 			if(!isSolutionsUpdating) {
@@ -191,10 +191,10 @@ public class MainActivity extends SherlockActivity {
 					.setEnabled(!isSolutionsUpdating)
 					.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 			}
-			setProgressBarIndeterminateVisibility(isSolutionsUpdating);
+			setSupportProgressBarIndeterminateVisibility(isSolutionsUpdating);
 			break;
 		default:
-			setProgressBarIndeterminateVisibility(false);
+			setSupportProgressBarIndeterminateVisibility(false);
 			break;
 		}
 		
@@ -337,17 +337,12 @@ public class MainActivity extends SherlockActivity {
 		}
 		
 		isSectorsUpdating = true;
-		supportInvalidateOptionsMenu();
-		/*
 		handler.post(new Runnable() {
 			@Override
 			public void run() {
-				if(viewPager.getCurrentItem() == PAGE_SECTORS) {
-					setSupportProgressBarIndeterminateVisibility(true);
-				}
+				supportInvalidateOptionsMenu();
 			}
 		});
-		*/
 		
 		new Thread(new Runnable() {
 
@@ -417,17 +412,13 @@ public class MainActivity extends SherlockActivity {
 						}
 					}
 				}
-				/*
+				isSectorsUpdating = false;
 				handler.post(new Runnable() {
 					@Override
 					public void run() {
-						if(viewPager.getCurrentItem() == PAGE_SECTORS) {
-							setSupportProgressBarIndeterminateVisibility(false);
-						}
+						supportInvalidateOptionsMenu();
 					}
-				});*/
-				isSectorsUpdating = false;
-				supportInvalidateOptionsMenu();
+				});;
 			}
 		}).start();
 	}
@@ -532,7 +523,12 @@ public class MainActivity extends SherlockActivity {
 		}
 		
 		isSolutionsUpdating = true;
-		supportInvalidateOptionsMenu();
+		handler.post(new Runnable() {
+			@Override
+			public void run() {
+				supportInvalidateOptionsMenu();
+			}
+		});
 		
 		new Thread(new Runnable() {
 			@Override
@@ -560,20 +556,14 @@ public class MainActivity extends SherlockActivity {
 				}
 				
 				isSolutionsUpdating = false;
-				supportInvalidateOptionsMenu();
+				handler.post(new Runnable() {
+					@Override
+					public void run() {
+						supportInvalidateOptionsMenu();
+					}
+				});;
 			}
 		}).start();
-		
-		
-		/*
-		handler.post(new Runnable() {
-			@Override
-			public void run() {
-				if(viewPager.getCurrentItem() == PAGE_SOLUTIONS) {
-					setSupportProgressBarIndeterminateVisibility(false);
-				}
-			}
-		});*/
 	}
 	
 	private PagerAdapter pagerAdapter = new PagerAdapter() {
