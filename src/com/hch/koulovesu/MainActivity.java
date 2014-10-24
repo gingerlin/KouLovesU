@@ -175,6 +175,7 @@ public class MainActivity extends SherlockActivity {
 	
 	@Override
 	public boolean onPrepareOptionsMenu(Menu menu) {
+		menu.clear();
 		switch(viewPager.getCurrentItem()) {
 		case PAGE_SECTORS:
 			if(!isSectorsUpdating) {
